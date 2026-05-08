@@ -16,18 +16,18 @@ fn setup() -> (Env, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register_contract(None, SplitContract);
+    let contract_id = env.register(SplitContract, ());
     let token_admin = Address::generate(&env);
     let token_id = env.register_stellar_asset_contract_v2(token_admin.clone()).address();
 
-    // Mint tokens to a few test accounts via the admin interface.
+    // Mint tokens to test accounts via the admin interface.
     let stellar_asset = StellarAssetClient::new(&env, &token_id);
     stellar_asset.mint(&token_admin, &1_000_000_000);
 
     (env, contract_id, token_id)
 }
 
-fn client(env: &Env, contract_id: &Address) -> SplitContractClient {
+fn client<'a>(env: &'a Env, contract_id: &Address) -> SplitContractClient<'a> {
     SplitContractClient::new(env, contract_id)
 }
 
