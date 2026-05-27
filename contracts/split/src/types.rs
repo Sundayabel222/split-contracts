@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, Symbol, Vec};
+use soroban_sdk::{contracttype, Address, BytesN, Symbol, Vec};
 
 /// Status of an invoice lifecycle.
 #[contracttype]
@@ -48,6 +48,22 @@ pub struct SubscriptionParams {
     pub amounts: Vec<i128>,
     /// USDC token contract address.
     pub token: Address,
+}
+
+/// A completion proof for a finalized invoice.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CompletionProof {
+    /// The invoice ID.
+    pub id: u64,
+    /// Final status (Released or Refunded).
+    pub status: InvoiceStatus,
+    /// Total funded amount in stroops.
+    pub funded: i128,
+    /// Timestamp when the invoice was finalized.
+    pub timestamp: u64,
+    /// SHA-256 hash of the invoice data for verification.
+    pub hash: BytesN<32>,
 }
 
 /// An on-chain invoice splitting payment among multiple recipients.

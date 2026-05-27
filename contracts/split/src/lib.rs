@@ -12,8 +12,8 @@ mod types;
 #[cfg(test)]
 mod test;
 
-use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Env, Symbol, Vec};
-use types::{Invoice, InvoiceStatus, Payment, AuditEntry, SubscriptionParams};
+use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, BytesN, Env, Symbol, Vec};
+use types::{Invoice, InvoiceStatus, Payment, AuditEntry, SubscriptionParams, CompletionProof};
 
 // ---------------------------------------------------------------------------
 // Storage helpers
@@ -382,6 +382,70 @@ impl SplitContract {
     /// Retrieve the audit log for an invoice.
     pub fn get_audit_log(env: Env, invoice_id: u64) -> Vec<AuditEntry> {
         get_audit_log(&env, invoice_id)
+    }
+
+    /// Generate a completion proof for a finalized invoice.
+    ///
+    /// Returns a proof containing ID, status, funded amount, timestamp,
+    /// and SHA-256 hash for off-chain verification.
+    ///
+    /// # Arguments
+    /// * `invoice_id` – target invoice
+    ///
+    /// # Returns
+    /// CompletionProof with invoice data and hash
+    pub fn get_completion_proof(env: Env, invoice_id: u64) -> CompletionProof {
+        let invoice = load_invoice(&env, invoice_id);
+
+        // Only return proof for finalized invoices
+        assert!(
+            invoice.status == InvoiceStatus::Released || invoice.status == InvoiceStatus::Refunded,
+            "invoice not finalized"
+        );
+
+        // Compute SHA-256 hash using binary serialization
+        let mut bytes: Vec<u8> = Vec::new(&env);
+        // Serialize each field in a consistent order
+        // Creator
+        bytes.extend_from_slice(&invoice.creator.to_bytes());
+        // Recipients count
+        bytes.push(invoice.recipients.len() as u8);
+        for r in invoice.recipients.iter() {
+            bytes.extend_from_slice(&r.to_bytes());
+        }
+        // Amounts
+        bytes.push((invoice.amounts.len() & 0xFF) as u8);
+        bytes.push(((invoice.amounts.len() >> 8) & 0xFF) as u8);
+        for a in invoice.amounts.iter() {
+            let a_bytes = a.to_le_bytes();
+            bytes.extend_from_slice(&a_bytes);
+        }
+        // Token
+        bytes.extend_from_slice(&invoice.token.to_bytes());
+        // Deadline
+        let d_bytes = invoice.deadline.to_le_bytes();
+        bytes.extend_from_slice(&d_bytes);
+        // Funded
+        let f_bytes = invoice.funded.to_le_bytes();
+        bytes.extend_from_slice(&f_bytes);
+        // Status (Pending=0, Released=1, Refunded=2, Cancelled=3)
+        let s_byte = match invoice.status {
+            InvoiceStatus::Pending => 0u8,
+            InvoiceStatus::Released => 1u8,
+            InvoiceStatus::Refunded => 2u8,
+            InvoiceStatus::Cancelled => 3u8,
+        };
+        bytes.push(s_byte);
+
+        let hash = env.crypto().sha256(&bytes).to_bytes();
+
+        CompletionProof {
+            id: invoice_id,
+            status: invoice.status,
+            funded: invoice.funded,
+            timestamp: env.ledger().timestamp(),
+            hash,
+        }
     }
 
     // -----------------------------------------------------------------------
