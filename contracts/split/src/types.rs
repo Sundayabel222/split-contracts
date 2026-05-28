@@ -22,6 +22,8 @@ pub struct Payment {
     pub payer: Address,
     /// Amount paid in stroops (7 decimal places).
     pub amount: i128,
+    /// Optional tip in stroops (0 = no tip).
+    pub tip: i128,
 }
 
 /// An audit log entry recording a state change.

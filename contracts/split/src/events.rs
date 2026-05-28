@@ -29,3 +29,11 @@ pub fn invoice_refunded(env: &Env, invoice_id: u64) {
     env.events()
         .publish((symbol_short!("inv_ref"), invoice_id), ());
 }
+
+/// Emitted once per unique payer when their refund is transferred.
+pub fn payer_refunded(env: &Env, invoice_id: u64, payer: &Address, amount: i128) {
+    env.events().publish(
+        (symbol_short!("pay_ref"), invoice_id),
+        (payer.clone(), amount),
+    );
+}
