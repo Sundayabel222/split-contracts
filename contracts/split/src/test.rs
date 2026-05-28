@@ -250,3 +250,71 @@ fn test_multi_recipient_release() {
     assert_eq!(tk.balance(&r2), 200);
     assert_eq!(tk.balance(&r3), 300);
 }
+
+// Use a real wasm fixture for upgrade tests.
+const TEST_WASM: &[u8] = include_bytes!(
+    "/home/codespace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/soroban-sdk-22.0.11/test_wasms/test_contract_data.wasm"
+);
+
+#[test]
+#[should_panic(expected = "already initialized")]
+fn test_initialize_twice_panics() {
+    let (env, contract_id, _token_id) = setup();
+    let c = client(&env, &contract_id);
+    let admin = Address::generate(&env);
+    c.initialize(&admin);
+    c.initialize(&admin);
+}
+
+#[test]
+fn test_upgrade_preserves_storage() {
+    let (env, contract_id, token_id) = setup();
+    let c = client(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    c.initialize(&admin);
+
+    // Create an invoice so there's state to preserve.
+    let creator = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let mut recipients = Vec::new(&env);
+    recipients.push_back(recipient.clone());
+    let mut amounts = Vec::new(&env);
+    amounts.push_back(100_i128);
+    env.ledger().set_timestamp(1_000);
+    let id = c.create_invoice(&creator, &recipients, &amounts, &token_id, &9_999_u64);
+
+    // Verify invoice exists before upgrade.
+    let invoice_before = c.get_invoice(&id);
+    assert_eq!(invoice_before.status, InvoiceStatus::Pending);
+
+    // Upload a wasm blob and upgrade — storage keys survive the wasm swap.
+    let new_wasm_hash = env
+        .deployer()
+        .upload_contract_wasm(soroban_sdk::Bytes::from_slice(&env, TEST_WASM));
+    c.upgrade(&new_wasm_hash);
+
+    // Verify the invoice storage key is still present after the upgrade.
+    let storage_key = (soroban_sdk::symbol_short!("inv"), id);
+    assert!(env.as_contract(&contract_id, || {
+        env.storage().persistent().has(&storage_key)
+    }));
+}
+
+#[test]
+#[should_panic]
+fn test_upgrade_requires_admin_auth() {
+    let (env, contract_id, _token_id) = setup();
+    let c = client(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    c.initialize(&admin);
+
+    let new_wasm_hash = env
+        .deployer()
+        .upload_contract_wasm(soroban_sdk::Bytes::from_slice(&env, TEST_WASM));
+
+    // Disable mock auths — upgrade should panic because admin auth is not provided.
+    env.set_auths(&[]);
+    c.upgrade(&new_wasm_hash);
+}

@@ -12,7 +12,7 @@ mod types;
 #[cfg(test)]
 mod test;
 
-use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Env, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, BytesN, Env, Symbol, Vec};
 use types::{Invoice, InvoiceStatus, Payment};
 
 // ---------------------------------------------------------------------------
@@ -22,6 +22,11 @@ use types::{Invoice, InvoiceStatus, Payment};
 /// Storage key for the auto-incrementing invoice counter.
 fn counter_key() -> Symbol {
     symbol_short!("counter")
+}
+
+/// Storage key for the contract admin address.
+fn admin_key() -> Symbol {
+    symbol_short!("admin")
 }
 
 /// Composite storage key for an invoice: (symbol, id).
@@ -51,6 +56,26 @@ pub struct SplitContract;
 
 #[contractimpl]
 impl SplitContract {
+    /// Set the contract admin. Can only be called once.
+    pub fn initialize(env: Env, admin: Address) {
+        assert!(
+            !env.storage().instance().has(&admin_key()),
+            "already initialized"
+        );
+        env.storage().instance().set(&admin_key(), &admin);
+    }
+
+    /// Upgrade the contract WASM. Requires admin auth.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&admin_key())
+            .expect("not initialized");
+        admin.require_auth();
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+    }
+
     /// Create a new invoice.
     ///
     /// # Arguments
