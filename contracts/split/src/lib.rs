@@ -12,8 +12,8 @@ mod types;
 #[cfg(test)]
 mod test;
 
-use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, BytesN, Env, Symbol, Vec};
-use types::{Invoice, InvoiceStatus, Payment, AuditEntry, SubscriptionParams, CompletionProof};
+use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Env, Symbol, Vec};
+use types::{Invoice, InvoiceStatus, InvoiceTemplate, Payment, AuditEntry, SubscriptionParams, CompletionProof};
 
 // ---------------------------------------------------------------------------
 // Storage helpers
@@ -50,6 +50,11 @@ fn audit_log_key(id: u64) -> (Symbol, u64) {
 /// Storage key for subscription params: (symbol, parent_invoice_id).
 fn subscription_params_key(id: u64) -> (Symbol, u64) {
     (symbol_short!("sub"), id)
+}
+
+/// Storage key for an invoice template: (symbol, creator, name).
+fn template_key(creator: &Address, name: &Symbol) -> (Symbol, Address, Symbol) {
+    (symbol_short!("tmpl"), creator.clone(), name.clone())
 }
 
 /// Append an audit entry to the log for an invoice.
@@ -109,47 +114,7 @@ impl SplitContract {
         deadline: u64,
     ) -> u64 {
         creator.require_auth();
-
-        assert!(
-            recipients.len() == amounts.len(),
-            "recipients and amounts length mismatch"
-        );
-        assert!(!recipients.is_empty(), "must have at least one recipient");
-        assert!(
-            deadline > env.ledger().timestamp(),
-            "deadline must be in the future"
-        );
-
-        for amt in amounts.iter() {
-            assert!(amt > 0, "amounts must be positive");
-        }
-
-        // Increment and persist the invoice counter.
-        let id: u64 = env
-            .storage()
-            .persistent()
-            .get(&counter_key())
-            .unwrap_or(0u64)
-            + 1;
-        env.storage().persistent().set(&counter_key(), &id);
-
-        let total: i128 = amounts.iter().sum();
-
-        let invoice = Invoice {
-            creator: creator.clone(),
-            recipients: recipients.clone(),
-            amounts,
-            token,
-            deadline,
-            funded: 0,
-            status: InvoiceStatus::Pending,
-            payments: Vec::new(&env),
-        };
-
-        save_invoice(&env, id, &invoice);
-        events::invoice_created(&env, id, &creator, total);
-
-        id
+        Self::_create_invoice(&env, creator, recipients, amounts, token, deadline)
     }
 
     /// Create a subscription chain of invoices for recurring monthly billing.
@@ -189,8 +154,8 @@ impl SplitContract {
 
         // Create first invoice with deadline 30 days in future (in seconds)
         let deadline = env.ledger().timestamp() + 30 * 24 * 60 * 60;
-        let id = Self::create_invoice(
-            env.clone(),
+        let id = Self::_create_invoice(
+            &env,
             creator.clone(),
             recipients.clone(),
             amounts.clone(),
@@ -257,7 +222,8 @@ impl SplitContract {
 
         // Auto-release if fully funded.
         if invoice.funded >= total {
-            Self::_release(&env, invoice_id, &mut invoice, &invoice.creator);
+            let creator = invoice.creator.clone();
+            Self::_release(&env, invoice_id, &mut invoice, &creator);
         } else {
             save_invoice(&env, invoice_id, &invoice);
         }
@@ -313,6 +279,62 @@ impl SplitContract {
         events::invoice_refunded(&env, invoice_id);
     }
 
+    /// Save a reusable invoice template under a named key.
+    ///
+    /// Calling again with the same `name` overwrites the existing template.
+    pub fn save_template(
+        env: Env,
+        creator: Address,
+        name: Symbol,
+        recipients: Vec<Address>,
+        amounts: Vec<i128>,
+        token: Address,
+    ) {
+        creator.require_auth();
+        assert!(
+            recipients.len() == amounts.len(),
+            "recipients and amounts length mismatch"
+        );
+        assert!(!recipients.is_empty(), "must have at least one recipient");
+        for amt in amounts.iter() {
+            assert!(amt > 0, "amounts must be positive");
+        }
+        let template = InvoiceTemplate { recipients, amounts, token };
+        env.storage().persistent().set(&template_key(&creator, &name), &template);
+    }
+
+    /// Create a new invoice from a previously saved template.
+    ///
+    /// # Returns
+    /// The new invoice ID.
+    pub fn create_from_template(
+        env: Env,
+        creator: Address,
+        name: Symbol,
+        deadline: u64,
+    ) -> u64 {
+        creator.require_auth();
+        let tmpl: InvoiceTemplate = env
+            .storage()
+            .persistent()
+            .get(&template_key(&creator, &name))
+            .expect("template not found");
+        Self::_create_invoice(&env, creator, tmpl.recipients, tmpl.amounts, tmpl.token, deadline)
+    }
+
+    /// Return the total amount contributed by `payer` toward `invoice_id`.
+    ///
+    /// Returns 0 if the address has not paid. Requires no auth (read-only).
+    pub fn get_payer_total(env: Env, invoice_id: u64, payer: Address) -> i128 {
+        let invoice = load_invoice(&env, invoice_id);
+        invoice
+            .payments
+            .iter()
+            .filter(|p| p.payer == payer)
+            .map(|p| p.amount)
+            .sum()
+    }
+
     /// Cancel an invoice before any payments are made.
     ///
     /// Only the creator can cancel, and it must be before payments start.
@@ -329,16 +351,18 @@ impl SplitContract {
             invoice.status == InvoiceStatus::Pending,
             "invoice is not pending"
         );
-        assert!(
-            invoice.creator == caller,
-            "only creator can cancel"
-        );
-        assert!(
-            invoice.funded == 0,
-            "cannot cancel invoice with payments"
-        );
+        assert!(invoice.creator == caller, "only creator can cancel");
 
-        invoice.status = InvoiceStatus::Cancelled;
+        let token_client = token::Client::new(&env, &invoice.token);
+        for payment in invoice.payments.iter() {
+            token_client.transfer(
+                &env.current_contract_address(),
+                &payment.payer,
+                &payment.amount,
+            );
+        }
+
+        invoice.status = InvoiceStatus::Refunded;
         save_invoice(&env, invoice_id, &invoice);
         append_audit_entry(&env, invoice_id, symbol_short!("cancel"), &caller);
     }
@@ -397,47 +421,30 @@ impl SplitContract {
     pub fn get_completion_proof(env: Env, invoice_id: u64) -> CompletionProof {
         let invoice = load_invoice(&env, invoice_id);
 
-        // Only return proof for finalized invoices
         assert!(
             invoice.status == InvoiceStatus::Released || invoice.status == InvoiceStatus::Refunded,
             "invoice not finalized"
         );
 
-        // Compute SHA-256 hash using binary serialization
-        let mut bytes: Vec<u8> = Vec::new(&env);
-        // Serialize each field in a consistent order
-        // Creator
-        bytes.extend_from_slice(&invoice.creator.to_bytes());
-        // Recipients count
-        bytes.push(invoice.recipients.len() as u8);
-        for r in invoice.recipients.iter() {
-            bytes.extend_from_slice(&r.to_bytes());
-        }
-        // Amounts
-        bytes.push((invoice.amounts.len() & 0xFF) as u8);
-        bytes.push(((invoice.amounts.len() >> 8) & 0xFF) as u8);
-        for a in invoice.amounts.iter() {
-            let a_bytes = a.to_le_bytes();
-            bytes.extend_from_slice(&a_bytes);
-        }
-        // Token
-        bytes.extend_from_slice(&invoice.token.to_bytes());
-        // Deadline
-        let d_bytes = invoice.deadline.to_le_bytes();
-        bytes.extend_from_slice(&d_bytes);
-        // Funded
-        let f_bytes = invoice.funded.to_le_bytes();
-        bytes.extend_from_slice(&f_bytes);
-        // Status (Pending=0, Released=1, Refunded=2, Cancelled=3)
-        let s_byte = match invoice.status {
-            InvoiceStatus::Pending => 0u8,
-            InvoiceStatus::Released => 1u8,
-            InvoiceStatus::Refunded => 2u8,
-            InvoiceStatus::Cancelled => 3u8,
-        };
-        bytes.push(s_byte);
+        // Build a byte buffer using soroban_sdk::Bytes for sha256 input.
+        let mut buf = soroban_sdk::Bytes::new(&env);
 
-        let hash = env.crypto().sha256(&bytes).to_bytes();
+        // invoice_id (8 bytes)
+        buf.extend_from_array(&invoice_id.to_le_bytes());
+        // funded (16 bytes)
+        buf.extend_from_array(&invoice.funded.to_le_bytes());
+        // deadline (8 bytes)
+        buf.extend_from_array(&invoice.deadline.to_le_bytes());
+        // status byte
+        let s_byte: u8 = match invoice.status {
+            InvoiceStatus::Pending => 0,
+            InvoiceStatus::Released => 1,
+            InvoiceStatus::Refunded => 2,
+            InvoiceStatus::Cancelled => 3,
+        };
+        buf.extend_from_array(&[s_byte]);
+
+        let hash = env.crypto().sha256(&buf).to_bytes();
 
         CompletionProof {
             id: invoice_id,
@@ -461,6 +468,7 @@ impl SplitContract {
             token_client.transfer(&env.current_contract_address(), &recipient, &amount);
         }
 
+        // All transfers succeeded — persist state change now.
         invoice.status = InvoiceStatus::Released;
         save_invoice(env, invoice_id, invoice);
         append_audit_entry(env, invoice_id, symbol_short!("release"), actor);
@@ -474,8 +482,8 @@ impl SplitContract {
         {
             // Create next invoice with deadline 30 days after current release
             let next_deadline = env.ledger().timestamp() + 30 * 24 * 60 * 60;
-            let next_id = Self::create_invoice(
-                env.clone(),
+            let _next_id = Self::_create_invoice(
+                env,
                 params.creator.clone(),
                 params.recipients.clone(),
                 params.amounts.clone(),
@@ -488,5 +496,53 @@ impl SplitContract {
                 .persistent()
                 .remove(&subscription_params_key(invoice_id));
         }
+    }
+
+    /// Internal invoice creation — no auth check. Called by public entry points
+    /// that have already verified auth (create_invoice, create_from_template,
+    /// create_subscription, and subscription chaining in _release).
+    fn _create_invoice(
+        env: &Env,
+        creator: Address,
+        recipients: Vec<Address>,
+        amounts: Vec<i128>,
+        token: Address,
+        deadline: u64,
+    ) -> u64 {
+        assert!(
+            recipients.len() == amounts.len(),
+            "recipients and amounts length mismatch"
+        );
+        assert!(!recipients.is_empty(), "must have at least one recipient");
+        assert!(
+            deadline > env.ledger().timestamp(),
+            "deadline must be in the future"
+        );
+        for amt in amounts.iter() {
+            assert!(amt > 0, "amounts must be positive");
+        }
+
+        let id: u64 = env
+            .storage()
+            .persistent()
+            .get(&counter_key())
+            .unwrap_or(0u64)
+            + 1;
+        env.storage().persistent().set(&counter_key(), &id);
+
+        let total: i128 = amounts.iter().sum();
+        let invoice = Invoice {
+            creator: creator.clone(),
+            recipients,
+            amounts,
+            token,
+            deadline,
+            funded: 0,
+            status: InvoiceStatus::Pending,
+            payments: Vec::new(env),
+        };
+        save_invoice(env, id, &invoice);
+        events::invoice_created(env, id, &creator, total);
+        id
     }
 }

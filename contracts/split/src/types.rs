@@ -66,6 +66,18 @@ pub struct CompletionProof {
     pub hash: BytesN<32>,
 }
 
+/// A reusable invoice template storing recipients, amounts, and token.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct InvoiceTemplate {
+    /// Ordered list of recipient addresses.
+    pub recipients: Vec<Address>,
+    /// Amounts owed to each recipient (parallel to `recipients`).
+    pub amounts: Vec<i128>,
+    /// USDC token contract address.
+    pub token: Address,
+}
+
 /// An on-chain invoice splitting payment among multiple recipients.
 #[contracttype]
 #[derive(Clone, Debug)]
