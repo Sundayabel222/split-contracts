@@ -1,111 +1,116 @@
-use soroban_sdk::{contracttype, Address, Bytes, BytesN, Symbol, Vec};
+use soroban_sdk::{contracttype, Address, BytesN, Symbol, Vec};
 
-/// Status of an invoice lifecycle.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub enum InvoiceStatus {
-    /// Invoice created, awaiting full payment.
     Pending,
-    /// All shares paid; funds released to recipients.
     Released,
-    /// Deadline passed before full funding; payers refunded.
     Refunded,
-    /// Invoice cancelled by creator before payments.
     Cancelled,
 }
 
-/// A single payment made toward an invoice.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct Payment {
-    /// Address of the payer.
     pub payer: Address,
-    /// Amount paid in stroops (7 decimal places).
     pub amount: i128,
-    /// Optional tip in stroops (0 = no tip).
     pub tip: i128,
 }
 
-/// An audit log entry recording a state change.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct AuditEntry {
-    /// Action type (e.g., "pay", "release", "refund").
     pub action: Symbol,
-    /// Address that triggered the action.
     pub actor: Address,
-    /// Ledger timestamp when the action occurred.
     pub timestamp: u64,
 }
 
-/// Parameters for creating a subscription invoice chain.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct SubscriptionParams {
-    /// Address that created the subscription.
     pub creator: Address,
-    /// Ordered list of recipient addresses.
     pub recipients: Vec<Address>,
-    /// Amounts owed to each recipient (parallel to `recipients`).
     pub amounts: Vec<i128>,
-    /// Token contract addresses per recipient (parallel to `recipients`).
     pub tokens: Vec<Address>,
 }
 
-/// A completion proof for a finalized invoice.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct CompletionProof {
-    /// The invoice ID.
     pub id: u64,
-    /// Final status (Released or Refunded).
     pub status: InvoiceStatus,
-    /// Total funded amount in stroops.
     pub funded: i128,
-    /// Timestamp when the invoice was finalized.
     pub timestamp: u64,
-    /// SHA-256 hash of the invoice data for verification.
     pub hash: BytesN<32>,
 }
 
-/// A reusable invoice template storing recipients, amounts, and token.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct InvoiceTemplate {
-    /// Ordered list of recipient addresses.
     pub recipients: Vec<Address>,
-    /// Amounts owed to each recipient (parallel to `recipients`).
     pub amounts: Vec<i128>,
-    /// USDC token contract address.
     pub token: Address,
 }
 
-/// An on-chain invoice splitting payment among multiple recipients.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CreateInvoiceParams {
+    pub recipients: Vec<Address>,
+    pub amounts: Vec<i128>,
+    pub token: Address,
+    pub deadline: u64,
+}
+
+/// A single graduated release tranche: `basis_points` out of 10 000 of the
+/// invoice total becomes releasable once the ledger time reaches `timestamp`.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Tranche {
+    pub timestamp: u64,
+    pub basis_points: u32,
+}
+
+/// Optional parameters for `create_invoice`, grouped to keep the function
+/// within Soroban's 10-parameter limit.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct InvoiceOptions {
+    pub co_creators: Vec<Address>,
+    pub allow_early_withdrawal: bool,
+    pub bonus_pool: i128,
+    pub bonus_max_payers: u32,
+    /// Issue #22: block release until this invoice is Released.
+    pub prerequisite_id: Option<u64>,
+    /// Issue #23: graduated release schedule; empty = release all at once.
+    pub tranches: Vec<Tranche>,
+}
+
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct Invoice {
-    /// Address that created the invoice.
     pub creator: Address,
-    /// Optional co-creators who share creator-gated permissions.
     pub co_creators: Vec<Address>,
-    /// Ordered list of recipient addresses.
     pub recipients: Vec<Address>,
-    /// Amounts owed to each recipient (parallel to `recipients`).
     pub amounts: Vec<i128>,
-    /// Token contract addresses per recipient (parallel to `recipients`).
+    /// Token per recipient (parallel to `recipients`); in practice all entries
+    /// are the same token set at creation time.
     pub tokens: Vec<Address>,
-    /// Unix timestamp after which unfunded invoices can be refunded.
     pub deadline: u64,
-    /// Total amount collected so far.
     pub funded: i128,
-    /// Current lifecycle status.
     pub status: InvoiceStatus,
-    /// All payments made toward this invoice.
     pub payments: Vec<Payment>,
-    /// Optional vesting duration in seconds. When set, recipients claim gradually.
     pub drip_duration: Option<u64>,
-    /// Timestamp when the invoice was released (set by `_release` when drip is active).
     pub release_timestamp: Option<u64>,
-    /// Amount already claimed by each recipient (parallel to `recipients`).
     pub claimed: Vec<i128>,
+    pub frozen: bool,
+    pub completion_time: Option<u64>,
+    pub allow_early_withdrawal: bool,
+    pub bonus_pool: i128,
+    pub bonus_max_payers: u32,
+    /// Issue #22: if set, `release()` will fail until this invoice is Released.
+    pub prerequisite_id: Option<u64>,
+    /// Issue #23: graduated release schedule; empty means release all at once.
+    pub tranches: Vec<Tranche>,
+    /// Issue #23: cumulative basis points already distributed (0–10 000).
+    pub released_bps: u32,
 }
