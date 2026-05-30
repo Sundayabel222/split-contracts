@@ -85,6 +85,15 @@ pub struct InvoiceOptions {
     pub tranches: Vec<Tranche>,
 }
 
+/// A named group of related invoices (e.g. project milestones) for
+/// combined analytics and coordinated management.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Bundle {
+    pub invoices: Vec<u64>,
+    pub metadata: Symbol,
+}
+
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct Invoice {

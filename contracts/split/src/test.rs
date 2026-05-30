@@ -6,7 +6,7 @@ use soroban_sdk::{
     token::{Client as TokenClient, StellarAssetClient},
     Address, Env, Vec,
 };
-use types::{InvoiceOptions, Tranche};
+use types::InvoiceOptions;
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -1225,4 +1225,109 @@ fn test_creation_fee_charged_per_invoice_in_batch() {
 
     // 2 invoices x 10 fee = 20 total.
     assert_eq!(tk.balance(&treasury), 20);
+}
+
+// ---------------------------------------------------------------------------
+// Bundles
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_bundle_create_and_get() {
+    let (env, contract_id, token_id) = setup();
+    let c = client(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    env.ledger().set_timestamp(1_000);
+
+    let id1 = make_invoice(&env, &c, &creator, &recipient, 100, &token_id, 9_999);
+    let id2 = make_invoice(&env, &c, &creator, &recipient, 200, &token_id, 9_999);
+
+    let mut ids = Vec::new(&env);
+    ids.push_back(id1);
+    ids.push_back(id2);
+
+    let metadata = symbol_short!("mile1");
+    let bundle_id = c.bundle_create(&ids, &metadata);
+    assert_eq!(bundle_id, 1);
+
+    let bundle = c.get_bundle(&bundle_id);
+    assert_eq!(bundle.invoices.len(), 2);
+    assert_eq!(bundle.invoices.get_unchecked(0), id1);
+    assert_eq!(bundle.invoices.get_unchecked(1), id2);
+    assert_eq!(bundle.metadata, metadata);
+}
+
+#[test]
+fn test_bundle_multiple_bundles_increment_id() {
+    let (env, contract_id, token_id) = setup();
+    let c = client(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    env.ledger().set_timestamp(1_000);
+
+    let id1 = make_invoice(&env, &c, &creator, &recipient, 100, &token_id, 9_999);
+    let id2 = make_invoice(&env, &c, &creator, &recipient, 200, &token_id, 9_999);
+    let id3 = make_invoice(&env, &c, &creator, &recipient, 300, &token_id, 9_999);
+
+    let mut ids = Vec::new(&env);
+    ids.push_back(id1);
+    ids.push_back(id2);
+    let b1 = c.bundle_create(&ids, &symbol_short!("projA"));
+    assert_eq!(b1, 1);
+
+    let mut ids2 = Vec::new(&env);
+    ids2.push_back(id3);
+    let b2 = c.bundle_create(&ids2, &symbol_short!("projB"));
+    assert_eq!(b2, 2);
+
+    let bundle1 = c.get_bundle(&b1);
+    assert_eq!(bundle1.invoices.len(), 2);
+    assert_eq!(bundle1.metadata, symbol_short!("projA"));
+
+    let bundle2 = c.get_bundle(&b2);
+    assert_eq!(bundle2.invoices.len(), 1);
+    assert_eq!(bundle2.metadata, symbol_short!("projB"));
+}
+
+#[test]
+#[should_panic(expected = "invoice not found")]
+fn test_bundle_with_nonexistent_invoice_panics() {
+    let (env, contract_id, token_id) = setup();
+    let c = client(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    env.ledger().set_timestamp(1_000);
+
+    let id = make_invoice(&env, &c, &creator, &recipient, 100, &token_id, 9_999);
+
+    let mut ids = Vec::new(&env);
+    ids.push_back(id);
+    ids.push_back(999); // non-existent invoice
+
+    c.bundle_create(&ids, &symbol_short!("bad"));
+}
+
+#[test]
+#[should_panic(expected = "bundle must contain at least one invoice")]
+fn test_bundle_empty_invoices_panics() {
+    let (env, contract_id, _token_id) = setup();
+    let c = client(&env, &contract_id);
+
+    let ids = Vec::new(&env);
+    c.bundle_create(&ids, &symbol_short!("empty"));
+}
+
+#[test]
+#[should_panic(expected = "bundle not found")]
+fn test_get_nonexistent_bundle_panics() {
+    let (env, contract_id, _token_id) = setup();
+    let c = client(&env, &contract_id);
+
+    c.get_bundle(&999);
 }

@@ -12,8 +12,8 @@ use soroban_sdk::{
     contract, contractimpl, symbol_short, token, Address, Bytes, BytesN, Env, Map, Symbol, Vec,
 };
 use types::{
-    AuditEntry, CompletionProof, CreateInvoiceParams, Invoice, InvoiceOptions, InvoiceStatus,
-    InvoiceTemplate, Payment, SubscriptionParams, Tranche,
+    AuditEntry, Bundle, CompletionProof, CreateInvoiceParams, Invoice, InvoiceOptions,
+    InvoiceStatus, InvoiceTemplate, Payment, SubscriptionParams, Tranche,
 };
 
 // ---------------------------------------------------------------------------
@@ -61,6 +61,9 @@ fn invoice_group_key(invoice_id: u64) -> (Symbol, u64) {
 }
 fn template_key(creator: &Address, name: &Symbol) -> (Symbol, Address, Symbol) {
     (symbol_short!("tmpl"), creator.clone(), name.clone())
+}
+fn bundle_key(id: u64) -> (Symbol, u64) {
+    (symbol_short!("bundle"), id)
 }
 
 /// Per-address reputation counter key (issue #24).
@@ -987,6 +990,45 @@ impl SplitContract {
             .set(&group_key(group_id), &invoice_ids);
 
         group_id
+    }
+
+    // -----------------------------------------------------------------------
+    // Bundles
+    // -----------------------------------------------------------------------
+
+    /// Group multiple invoice IDs under a shared bundle ID with metadata.
+    ///
+    /// All invoice IDs are validated to exist before creating the bundle.
+    /// Returns the auto-incremented bundle ID.
+    pub fn bundle_create(env: Env, invoice_ids: Vec<u64>, metadata: Symbol) -> u64 {
+        assert!(!invoice_ids.is_empty(), "bundle must contain at least one invoice");
+
+        // Verify every invoice exists.
+        for id in invoice_ids.iter() {
+            let _ = load_invoice(&env, id);
+        }
+
+        let bundle_cnt_key = symbol_short!("bndl_cnt");
+        let bundle_id: u64 = env
+            .storage()
+            .persistent()
+            .get(&bundle_cnt_key)
+            .unwrap_or(0u64)
+            + 1;
+        env.storage().persistent().set(&bundle_cnt_key, &bundle_id);
+
+        let bundle = Bundle { invoices: invoice_ids, metadata };
+        env.storage().persistent().set(&bundle_key(bundle_id), &bundle);
+
+        bundle_id
+    }
+
+    /// Retrieve a bundle by its ID.
+    pub fn get_bundle(env: Env, bundle_id: u64) -> Bundle {
+        env.storage()
+            .persistent()
+            .get(&bundle_key(bundle_id))
+            .expect("bundle not found")
     }
 
     // -----------------------------------------------------------------------
