@@ -154,6 +154,14 @@
                     },
                     {
                       "key": {
+                        "symbol": "soft_expiry_seconds"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "tranches"
                       },
                       "val": {
@@ -246,6 +254,14 @@
                         "symbol": "prerequisite_id"
                       },
                       "val": "void"
+                    },
+                    {
+                      "key": {
+                        "symbol": "soft_expiry_seconds"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
                     },
                     {
                       "key": {
@@ -733,6 +749,14 @@
                     },
                     {
                       "key": {
+                        "symbol": "soft_expiry_seconds"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "status"
                       },
                       "val": {
@@ -959,6 +983,14 @@
                       },
                       "val": {
                         "u32": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "soft_expiry_seconds"
+                      },
+                      "val": {
+                        "u64": 0
                       }
                     },
                     {

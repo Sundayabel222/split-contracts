@@ -83,6 +83,8 @@ pub struct InvoiceOptions {
     pub prerequisite_id: Option<u64>,
     /// Issue #23: graduated release schedule; empty = release all at once.
     pub tranches: Vec<Tranche>,
+    /// Number of seconds before `deadline` when a soft-expiry warning is emitted.
+    pub soft_expiry_seconds: u64,
 }
 
 /// A named group of related invoices (e.g. project milestones) for
@@ -122,4 +124,5 @@ pub struct Invoice {
     pub tranches: Vec<Tranche>,
     /// Issue #23: cumulative basis points already distributed (0–10 000).
     pub released_bps: u32,
+    pub soft_expiry_seconds: u64,
 }

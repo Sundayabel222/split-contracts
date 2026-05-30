@@ -37,3 +37,12 @@ pub fn payer_refunded(env: &Env, invoice_id: u64, payer: &Address, amount: i128)
         (payer.clone(), amount),
     );
 }
+
+/// Emitted when a payment occurs within the soft-expiry window,
+/// indicating the hard deadline is approaching.
+pub fn deadline_warning(env: &Env, invoice_id: u64, remaining_seconds: u64) {
+    env.events().publish(
+        (symbol_short!("dl_wrn"), invoice_id),
+        remaining_seconds,
+    );
+}

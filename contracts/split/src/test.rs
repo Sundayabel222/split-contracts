@@ -44,6 +44,7 @@ fn default_options(env: &Env) -> InvoiceOptions {
         bonus_max_payers: 0,
         prerequisite_id: None,
         tranches: Vec::new(env),
+        soft_expiry_seconds: 0,
     }
 }
 
@@ -604,6 +605,7 @@ fn test_bonus_pool_distributed_to_first_payer() {
             bonus_max_payers: 1,
             prerequisite_id: None,
             tranches: Vec::new(&env),
+            soft_expiry_seconds: 0,
         },
     );
 
@@ -840,6 +842,7 @@ fn test_release_blocked_by_prerequisite() {
             bonus_max_payers: 0,
             prerequisite_id: Some(id_a),
             tranches: Vec::new(&env),
+            soft_expiry_seconds: 0,
         },
     );
 
@@ -883,6 +886,7 @@ fn test_release_succeeds_after_prerequisite_released() {
             bonus_max_payers: 0,
             prerequisite_id: Some(id_a),
             tranches: Vec::new(&env),
+            soft_expiry_seconds: 0,
         },
     );
 
@@ -959,6 +963,7 @@ fn test_tranches_partial_then_full_release() {
             bonus_max_payers: 0,
             prerequisite_id: None,
             tranches: tranches.clone(),
+            soft_expiry_seconds: 0,
         },
     );
 
@@ -1017,6 +1022,7 @@ fn test_release_before_any_tranche_unlocked_panics() {
             bonus_max_payers: 0,
             prerequisite_id: None,
             tranches: tranches.clone(),
+            soft_expiry_seconds: 0,
         },
     );
 
@@ -1330,4 +1336,82 @@ fn test_get_nonexistent_bundle_panics() {
     let c = client(&env, &contract_id);
 
     c.get_bundle(&999);
+}
+
+#[test]
+fn test_soft_expiry_payment_succeeds_in_warning_window() {
+    let (env, contract_id, token_id) = setup();
+    let c = client(&env, &contract_id);
+    let tk = token_client(&env, &token_id);
+
+    let creator = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    StellarAssetClient::new(&env, &token_id).mint(&payer, &500);
+    env.ledger().set_timestamp(1_000);
+
+    // Invoice with 500s soft-expiry window, hard deadline at 2_000.
+    let options = InvoiceOptions {
+        co_creators: Vec::new(&env),
+        allow_early_withdrawal: false,
+        bonus_pool: 0,
+        bonus_max_payers: 0,
+        prerequisite_id: None,
+        tranches: Vec::new(&env),
+        soft_expiry_seconds: 500,
+    };
+    let id = c.create_invoice(&creator, &recipients(&env, &recipient), &amounts(&env, 200), &token_id, &2_000, &options);
+
+    // Move into the soft-expiry window (now=1_700, deadline=2_000, soft window starts at 1_500).
+    env.ledger().set_timestamp(1_700);
+
+    // Payment must still succeed.
+    c.pay(&payer, &id, &200_i128, &0_u64);
+    assert_eq!(c.get_invoice(&id).status, InvoiceStatus::Released);
+    assert_eq!(tk.balance(&recipient), 200);
+}
+
+#[test]
+#[should_panic(expected = "invoice deadline has passed")]
+fn test_soft_expiry_still_blocks_after_hard_deadline() {
+    let (env, contract_id, token_id) = setup();
+    let c = client(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    StellarAssetClient::new(&env, &token_id).mint(&payer, &500);
+    env.ledger().set_timestamp(1_000);
+
+    let options = InvoiceOptions {
+        co_creators: Vec::new(&env),
+        allow_early_withdrawal: false,
+        bonus_pool: 0,
+        bonus_max_payers: 0,
+        prerequisite_id: None,
+        tranches: Vec::new(&env),
+        soft_expiry_seconds: 500,
+    };
+    let id = c.create_invoice(&creator, &recipients(&env, &recipient), &amounts(&env, 200), &token_id, &2_000, &options);
+
+    // Past the hard deadline.
+    env.ledger().set_timestamp(2_001);
+
+    c.pay(&payer, &id, &200_i128, &0_u64);
+}
+
+/// Helper: single-element recipient vec.
+fn recipients(env: &Env, addr: &Address) -> Vec<Address> {
+    let mut v = Vec::new(env);
+    v.push_back(addr.clone());
+    v
+}
+
+/// Helper: single-element amount vec.
+fn amounts(env: &Env, amt: i128) -> Vec<i128> {
+    let mut v = Vec::new(env);
+    v.push_back(amt);
+    v
 }

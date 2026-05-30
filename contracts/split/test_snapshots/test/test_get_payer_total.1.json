@@ -154,6 +154,14 @@
                     },
                     {
                       "key": {
+                        "symbol": "soft_expiry_seconds"
+                      },
+                      "val": {
+                        "u64": 0
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "tranches"
                       },
                       "val": {
@@ -642,6 +650,14 @@
                       },
                       "val": {
                         "u32": 0
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "soft_expiry_seconds"
+                      },
+                      "val": {
+                        "u64": 0
                       }
                     },
                     {

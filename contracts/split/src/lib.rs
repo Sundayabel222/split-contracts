@@ -273,6 +273,7 @@ impl SplitContract {
             options.bonus_max_payers,
             options.prerequisite_id,
             options.tranches,
+            options.soft_expiry_seconds,
         )
     }
 
@@ -289,6 +290,7 @@ impl SplitContract {
         bonus_max_payers: u32,
         prerequisite_id: Option<u64>,
         tranches: Vec<Tranche>,
+        soft_expiry_seconds: u64,
     ) -> u64 {
         assert!(
             recipients.len() == amounts.len(),
@@ -380,6 +382,7 @@ impl SplitContract {
             prerequisite_id,
             tranches,
             released_bps: 0,
+            soft_expiry_seconds,
         };
 
         save_invoice(env, id, &invoice);
@@ -412,6 +415,7 @@ impl SplitContract {
                 0,
                 None,
                 Vec::new(&env),
+                0,
             );
             ids.push_back(id);
         }
@@ -453,6 +457,7 @@ impl SplitContract {
             0,
             None,
             Vec::new(&env),
+            0,
         );
 
         if months > 1 {
@@ -501,6 +506,16 @@ impl SplitContract {
             env.ledger().timestamp() <= invoice.deadline,
             "invoice deadline has passed"
         );
+
+        // Emit a warning when we are inside the soft-expiry window so that
+        // off-chain systems can notify payers before the hard deadline.
+        if invoice.soft_expiry_seconds > 0 {
+            let now = env.ledger().timestamp();
+            if now >= invoice.deadline.saturating_sub(invoice.soft_expiry_seconds) {
+                events::deadline_warning(env, invoice_id, invoice.deadline - now);
+            }
+        }
+
         assert!(amount > 0, "payment amount must be positive");
 
         let total: i128 = invoice.amounts.iter().sum();
@@ -761,6 +776,7 @@ impl SplitContract {
                 0,
                 None,
                 Vec::new(env),
+                0,
             );
             env.storage()
                 .persistent()
@@ -960,6 +976,7 @@ impl SplitContract {
             0,
             None,
             Vec::new(&env),
+            0,
         )
     }
 
